@@ -1,0 +1,88 @@
+from flask import Flask, render_template, request, redirect, jsonify
+import json
+import serial
+
+app = Flask(__name__)
+
+arduino = serial.Serial(port='COM4', baudrate=9600, timeout=1)
+
+MAX_MESSAGES = 10
+
+def get_stored_messages():
+    try:
+        arduino.write(b'R')
+        messages_json = arduino.readline().decode('utf-8').rstrip()
+        messages = json.loads(messages_json)
+        return messages[-MAX_MESSAGES:]  # Returnează ultimele MAX_MESSAGES mesaje
+    except json.JSONDecodeError:
+        return []
+
+def save_message(message):
+    messages = get_stored_messages()
+    messages.append(message)
+    messages = messages[-MAX_MESSAGES:]  # Menține doar ultimele MAX_MESSAGES mesaje
+    messages_json = json.dumps(messages)
+    arduino.write(messages_json.encode('utf-8'))
+
+@app.route('/')
+def index():
+    temperature = None
+    try:
+        arduino.write(b'T')  # Trimiterea comenzii pentru citirea temperaturii
+        temperature = arduino.readline().decode('utf-8').rstrip()
+    except Exception as e:
+        print("Eroare la citirea temperaturii:", e)
+    messages = get_stored_messages()
+    return render_template('index.html', temperature=temperature, messages=messages)
+
+@app.route('/control', methods=['POST'])
+def control():
+    command = request.form['command']
+    arduino.write(command.encode('utf-8'))
+    if command == 'A':
+        save_message("LED-ul a fost aprins.")
+    elif command == 'S':
+        save_message("LED-ul a fost stins.")
+    return redirect('/')
+
+@app.route('/send_message', methods=['POST'])
+def send_message():
+    try:
+        message = request.json['message']
+        arduino.write(message.encode())
+        return jsonify({'status': 'success', 'message': 'Message sent to Arduino'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
+
+if __name__ == '__main__':
+    app.run(debug=True)
+_______________________________
+
+#index.html
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arduino Control</title>
+</head>
+<body>
+    <h1>Starea curentă</h1>
+    <p>Temperatura curentă: {{ temperature }} °C</p>
+    <p>Nivelul de apa</p>
+
+    <h2>Control LED</h2>
+    <form action="/control" method="post">
+        <button type="submit" name="command" value="A">Aprinde LED</button>
+        <button type="submit" name="command" value="S">Stinge LED</button>
+    </form>
+
+    <h2>Mesaje</h2>
+    <ul>
+        {% for message in messages %}
+            <li>{{ message }}</li>
+        {% endfor %}
+    </ul>
+</body>
+</html>
